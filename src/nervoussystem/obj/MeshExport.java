@@ -239,33 +239,200 @@ public class MeshExport extends PGraphics {
 	}
   }
 
-  // Draw a triangle with vertex colors (simplified - uses single color per triangle)
+  // Draw a triangle with vertex color interpolation using barycentric coordinates
   private void drawColoredTriangle(int x0, int y0, int c0, int x1, int y1, int c1, int x2, int y2, int c2) {
-	int[] xPoints = {x0, x1, x2};
-	int[] yPoints = {y0, y1, y2};
-	// Use average color for fill and stroke
-	int r = ((c0 >> 16) & 0xFF) + ((c1 >> 16) & 0xFF) + ((c2 >> 16) & 0xFF);
-	int g = ((c0 >> 8) & 0xFF) + ((c1 >> 8) & 0xFF) + ((c2 >> 8) & 0xFF);
-	int b = (c0 & 0xFF) + (c1 & 0xFF) + (c2 & 0xFF);
-	Color avgColor = new Color(r/3, g/3, b/3);
-	g2d.setColor(avgColor);
-	g2d.fillPolygon(xPoints, yPoints, 3);
-	g2d.setStroke(new BasicStroke(3));
-	g2d.drawPolygon(xPoints, yPoints, 3);
+	// Calculate bounding box
+	int minX = Math.min(x0, Math.min(x1, x2));
+	int maxX = Math.max(x0, Math.max(x1, x2));
+	int minY = Math.min(y0, Math.min(y1, y2));
+	int maxY = Math.max(y0, Math.max(y1, y2));
+
+	// Precompute denominator for barycentric coordinates
+	float denom = (float)((y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2));
+	if (Math.abs(denom) < 0.0001f) {
+		// Degenerate triangle, use average color
+		int r = (((c0 >> 16) & 0xFF) + ((c1 >> 16) & 0xFF) + ((c2 >> 16) & 0xFF)) / 3;
+		int g = (((c0 >> 8) & 0xFF) + ((c1 >> 8) & 0xFF) + ((c2 >> 8) & 0xFF)) / 3;
+		int b = ((c0 & 0xFF) + (c1 & 0xFF) + (c2 & 0xFF)) / 3;
+		g2d.setColor(new Color(r, g, b));
+		g2d.fillPolygon(new int[]{x0, x1, x2}, new int[]{y0, y1, y2}, 3);
+		return;
+	}
+
+	// Extract RGB components from vertex colors
+	int r0 = (c0 >> 16) & 0xFF, g0 = (c0 >> 8) & 0xFF, b0 = c0 & 0xFF;
+	int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
+	int r2 = (c2 >> 16) & 0xFF, g2 = (c2 >> 8) & 0xFF, b2 = c2 & 0xFF;
+
+	// Iterate over bounding box and interpolate colors
+	for (int py = minY; py <= maxY; py++) {
+		for (int px = minX; px <= maxX; px++) {
+			// Bounds check
+			if (px < 0 || px >= textureWidth || py < 0 || py >= textureHeight) {
+				continue;
+			}
+
+			// Calculate barycentric coordinates
+			float lambda0 = ((y1 - y2) * (px - x2) + (x2 - x1) * (py - y2)) / denom;
+			float lambda1 = ((y2 - y0) * (px - x2) + (x0 - x2) * (py - y2)) / denom;
+			float lambda2 = 1.0f - lambda0 - lambda1;
+
+			// Check if point is inside triangle (with small epsilon for edge cases)
+			if (lambda0 >= -0.001f && lambda1 >= -0.001f && lambda2 >= -0.001f) {
+				// Clamp lambdas to valid range
+				lambda0 = Math.max(0, Math.min(1, lambda0));
+				lambda1 = Math.max(0, Math.min(1, lambda1));
+				lambda2 = Math.max(0, Math.min(1, lambda2));
+
+				// Normalize
+				float sum = lambda0 + lambda1 + lambda2;
+				lambda0 /= sum;
+				lambda1 /= sum;
+				lambda2 /= sum;
+
+				// Interpolate color
+				int r = (int)(lambda0 * r0 + lambda1 * r1 + lambda2 * r2);
+				int g = (int)(lambda0 * g0 + lambda1 * g1 + lambda2 * g2);
+				int b = (int)(lambda0 * b0 + lambda1 * b1 + lambda2 * b2);
+
+				// Clamp to valid range
+				r = Math.max(0, Math.min(255, r));
+				g = Math.max(0, Math.min(255, g));
+				b = Math.max(0, Math.min(255, b));
+
+				textureImg.setRGB(px, py, (r << 16) | (g << 8) | b);
+			}
+		}
+	}
+
+	// Draw border to fill edge pixels
+	drawTriangleBorder(x0, y0, c0, x1, y1, c1, x2, y2, c2);
   }
 
-  // Draw a quad with vertex colors
+  // Draw triangle border with interpolated colors along edges
+  private void drawTriangleBorder(int x0, int y0, int c0, int x1, int y1, int c1, int x2, int y2, int c2) {
+	drawInterpolatedLine(x0, y0, c0, x1, y1, c1);
+	drawInterpolatedLine(x1, y1, c1, x2, y2, c2);
+	drawInterpolatedLine(x2, y2, c2, x0, y0, c0);
+  }
+
+  // Draw a line with color interpolation between two endpoints
+  private void drawInterpolatedLine(int x0, int y0, int c0, int x1, int y1, int c1) {
+	int dx = Math.abs(x1 - x0);
+	int dy = Math.abs(y1 - y0);
+	int steps = Math.max(dx, dy);
+	if (steps == 0) {
+		if (x0 >= 0 && x0 < textureWidth && y0 >= 0 && y0 < textureHeight) {
+			textureImg.setRGB(x0, y0, c0 & 0xFFFFFF);
+		}
+		return;
+	}
+
+	int r0 = (c0 >> 16) & 0xFF, g0 = (c0 >> 8) & 0xFF, b0 = c0 & 0xFF;
+	int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
+
+	for (int i = 0; i <= steps; i++) {
+		float t = (float) i / steps;
+		int px = (int)(x0 + t * (x1 - x0));
+		int py = (int)(y0 + t * (y1 - y0));
+
+		int r = (int)(r0 + t * (r1 - r0));
+		int g = (int)(g0 + t * (g1 - g0));
+		int b = (int)(b0 + t * (b1 - b0));
+
+		if (px >= 0 && px < textureWidth && py >= 0 && py < textureHeight) {
+			textureImg.setRGB(px, py, (r << 16) | (g << 8) | b);
+		}
+	}
+  }
+
+  // Draw a quad with vertex color interpolation (using bilinear interpolation)
   private void drawColoredQuad(int x0, int y0, int c0, int x1, int y1, int c1, int x2, int y2, int c2, int x3, int y3, int c3) {
-	int[] xPoints = {x0, x1, x2, x3};
-	int[] yPoints = {y0, y1, y2, y3};
-	int r = ((c0 >> 16) & 0xFF) + ((c1 >> 16) & 0xFF) + ((c2 >> 16) & 0xFF) + ((c3 >> 16) & 0xFF);
-	int g = ((c0 >> 8) & 0xFF) + ((c1 >> 8) & 0xFF) + ((c2 >> 8) & 0xFF) + ((c3 >> 8) & 0xFF);
-	int b = (c0 & 0xFF) + (c1 & 0xFF) + (c2 & 0xFF) + (c3 & 0xFF);
-	Color avgColor = new Color(r/4, g/4, b/4);
-	g2d.setColor(avgColor);
-	g2d.fillPolygon(xPoints, yPoints, 4);
-	g2d.setStroke(new BasicStroke(4));
-	g2d.drawPolygon(xPoints, yPoints, 4);
+	// Calculate bounding box
+	int minX = Math.min(Math.min(x0, x1), Math.min(x2, x3));
+	int maxX = Math.max(Math.max(x0, x1), Math.max(x2, x3));
+	int minY = Math.min(Math.min(y0, y1), Math.min(y2, y3));
+	int maxY = Math.max(Math.max(y0, y1), Math.max(y2, y3));
+
+	// Extract RGB components from vertex colors
+	int r0 = (c0 >> 16) & 0xFF, g0 = (c0 >> 8) & 0xFF, b0 = c0 & 0xFF;
+	int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
+	int r2 = (c2 >> 16) & 0xFF, g2 = (c2 >> 8) & 0xFF, b2 = c2 & 0xFF;
+	int r3 = (c3 >> 16) & 0xFF, g3 = (c3 >> 8) & 0xFF, b3 = c3 & 0xFF;
+
+	// For each pixel in bounding box, check if inside quad and interpolate color
+	for (int py = minY; py <= maxY; py++) {
+		for (int px = minX; px <= maxX; px++) {
+			// Bounds check
+			if (px < 0 || px >= textureWidth || py < 0 || py >= textureHeight) {
+				continue;
+			}
+
+			// Check if point is inside the quad using cross product test
+			if (!isInsideQuad(px, py, x0, y0, x1, y1, x2, y2, x3, y3)) {
+				continue;
+			}
+
+			// Use bilinear interpolation based on normalized position
+			// Quad vertices: 0(top-left), 1(top-right), 2(bottom-right), 3(bottom-left)
+			float u = (float)(px - minX) / Math.max(1, maxX - minX);
+			float v = (float)(py - minY) / Math.max(1, maxY - minY);
+
+			// Bilinear interpolation
+			// top edge: lerp between c0 and c1
+			// bottom edge: lerp between c3 and c2
+			// then lerp between top and bottom
+			float rTop = r0 + u * (r1 - r0);
+			float gTop = g0 + u * (g1 - g0);
+			float bTop = b0 + u * (b1 - b0);
+
+			float rBottom = r3 + u * (r2 - r3);
+			float gBottom = g3 + u * (g2 - g3);
+			float bBottom = b3 + u * (b2 - b3);
+
+			int r = (int)(rTop + v * (rBottom - rTop));
+			int g = (int)(gTop + v * (gBottom - gTop));
+			int b = (int)(bTop + v * (bBottom - bTop));
+
+			// Clamp to valid range
+			r = Math.max(0, Math.min(255, r));
+			g = Math.max(0, Math.min(255, g));
+			b = Math.max(0, Math.min(255, b));
+
+			textureImg.setRGB(px, py, (r << 16) | (g << 8) | b);
+		}
+	}
+
+	// Draw border to fill edge pixels
+	drawQuadBorder(x0, y0, c0, x1, y1, c1, x2, y2, c2, x3, y3, c3);
+  }
+
+  // Check if a point is inside a quadrilateral using cross product test
+  private boolean isInsideQuad(int px, int py, int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3) {
+	// Check if point is on the same side of all edges
+	float d0 = crossProduct2D(x1 - x0, y1 - y0, px - x0, py - y0);
+	float d1 = crossProduct2D(x2 - x1, y2 - y1, px - x1, py - y1);
+	float d2 = crossProduct2D(x3 - x2, y3 - y2, px - x2, py - y2);
+	float d3 = crossProduct2D(x0 - x3, y0 - y3, px - x3, py - y3);
+
+	boolean hasNeg = (d0 < 0) || (d1 < 0) || (d2 < 0) || (d3 < 0);
+	boolean hasPos = (d0 > 0) || (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+	// If all same sign (or zero), point is inside
+	return !(hasNeg && hasPos);
+  }
+
+  // 2D cross product
+  private float crossProduct2D(float ax, float ay, float bx, float by) {
+	return ax * by - ay * bx;
+  }
+
+  // Draw quad border with interpolated colors along edges
+  private void drawQuadBorder(int x0, int y0, int c0, int x1, int y1, int c1, int x2, int y2, int c2, int x3, int y3, int c3) {
+	drawInterpolatedLine(x0, y0, c0, x1, y1, c1);
+	drawInterpolatedLine(x1, y1, c1, x2, y2, c2);
+	drawInterpolatedLine(x2, y2, c2, x3, y3, c3);
+	drawInterpolatedLine(x3, y3, c3, x0, y0, c0);
   }
   
   public void beginShape(int kind) {
