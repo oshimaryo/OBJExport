@@ -22,6 +22,9 @@ package nervoussystem.obj;
 
 import java.io.*;
 import java.util.HashMap;
+import java.awt.*;
+import java.awt.image.BufferedImage;
+import javax.imageio.ImageIO;
 import processing.core.*;
 
 public class MeshExport extends PGraphics {
@@ -57,8 +60,10 @@ public class MeshExport extends PGraphics {
   
   //color
   boolean colorFlag = false;
-  private static PGraphics textureG = null;
-  private static PImage texture = null;
+  private static BufferedImage textureImg = null;
+  private static Graphics2D g2d = null;
+  private static int textureWidth = 0;
+  private static int textureHeight = 0;
   
   public MeshExport() {
     vertices = new int[DEFAULT_VERTICES];
@@ -91,7 +96,9 @@ public class MeshExport extends PGraphics {
     writer.close();
     writer = null;
 	ptMap.clear();
-	if(texture != null) {
+	if(textureImg != null) {
+		textureImg = null;
+		g2d = null;
 	}
   }
 
@@ -105,8 +112,10 @@ public class MeshExport extends PGraphics {
     // Processing 4.x compatibility: removed defaultSettings() call
     // as it causes NullPointerException when parent is not yet set.
     // Initialize only what we need for this renderer.
+    colorMode(RGB, 255);
     fillColor = 0xFFFFFFFF;  // white fill by default
     fill = true;
+    shape = 0;
 
     if (writer == null) {
       try {
@@ -153,137 +162,277 @@ public class MeshExport extends PGraphics {
 		showWarning("Generating texture... this might take a while");
 		textureSize = PApplet.ceil(textureSize/1024.0f)*1024;
 	}
-	if(texture == null && parent != null) {
-		texture = parent.createImage(10,10,PApplet.RGB);
-		//textureG = parent.createGraphics(PApplet.min(textureSize,1024), PApplet.min(textureSize,1024), P2D);
-		textureG = parent.createGraphics(1024,1024, PConstants.P2D);
-	}
-	if(texture == null || textureG == null) {
-		showWarning("Cannot create texture for color export. Parent PApplet not set.");
-		colorFlag = false;
-		return;
-	}
-	//need to make a separate image in case the texture is too big for openGL
-	texture.resize(textureSize,textureSize);
-	//textureG.setSize(PApplet.min(textureSize,1024), PApplet.min(textureSize,1024));
-	//writeTextureCoords();
+
+	// Use BufferedImage directly to avoid pixelDensity issues
+	textureWidth = textureSize;
+	textureHeight = textureSize;
+	textureImg = new BufferedImage(textureSize, textureSize, BufferedImage.TYPE_INT_RGB);
+	g2d = textureImg.createGraphics();
+	g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+	g2d.setColor(Color.BLACK);
+	g2d.fillRect(0, 0, textureSize, textureSize);
+
 	generateTexture();
   }
       
   private void generateTexture() {
-    textureG.beginDraw();
-	textureG.background(0);
 	int c;
 	int currX = 0, currY = 0;
 	int[] f;
 	int[] fc;
 	boolean upper = true;
-	textureG.strokeWeight(3);
-	int cIndex = 0;
-	int gX = 0;
-	int gY = 0;
+
 	for(int i=0;i<faceCount;++i) {
 		f = faces[i];
 		fc = faceColors[i];
 		if(f.length > 4) showWarning("Faces with more than 4 sides cannot be exported with color");
 		else if(f.length == 3) {
 			//draw triangle
-			textureG.strokeWeight(3);
 			if(upper) {
-				textureG.beginShape();
-				c = fc[0];
-				textureG.fill(c);
-				textureG.stroke(c);
-				textureG.vertex(currX+1+.5f,currY+1+.5f);
-				writeTexCoord((gX+currX+1f+.5f)/texture.width, (1.0f-(gY+currY+1f+.5f)/texture.height));
-				c = fc[1];
-				textureG.fill(c);
-				textureG.stroke(c);
-				textureG.vertex(currX+1+TRIANGLE_RES+.5f,currY+1+.5f);
-				writeTexCoord((gX+currX+1f+TRIANGLE_RES+.5f)/texture.width , (1.0f-(gY+currY+1f+.5f)/texture.height));
-				c = fc[2];
-				textureG.fill(c);
-				textureG.stroke(c);
-				textureG.vertex(currX+1+.5f,currY+TRIANGLE_RES+1+.5f);
-				writeTexCoord((gX+currX+1f+.5f)/texture.width , (1.0f-(gY+currY+TRIANGLE_RES+1f+.5f)/texture.height));				
-				textureG.endShape(CLOSE);
+				int x0 = currX+1, y0 = currY+1;
+				int x1 = currX+1+TRIANGLE_RES, y1 = currY+1;
+				int x2 = currX+1, y2 = currY+TRIANGLE_RES+1;
+				int[] xPoints = {x0, x1, x2};
+				int[] yPoints = {y0, y1, y2};
+				// Fill with gradient approximation - use vertex colors
+				drawColoredTriangle(x0, y0, fc[0], x1, y1, fc[1], x2, y2, fc[2]);
+				writeTexCoord((x0+.5f)/textureWidth, (1.0f-(y0+.5f)/textureHeight));
+				writeTexCoord((x1+.5f)/textureWidth, (1.0f-(y1+.5f)/textureHeight));
+				writeTexCoord((x2+.5f)/textureWidth, (1.0f-(y2+.5f)/textureHeight));
 			} else {
-				textureG.beginShape();
-				c = fc[0];
-				textureG.fill(c);
-				textureG.stroke(c);
-				textureG.vertex(currX+3+TRIANGLE_RES+.5f,currY+3+.5f);
-				writeTexCoord((gX+currX+3f+TRIANGLE_RES+.5f)/texture.width , (1.0f-(gY+currY+3f+.5f)/texture.height));
-				c = fc[1];
-				textureG.fill(c);
-				textureG.stroke(c);
-				textureG.vertex(currX+TRIANGLE_RES+3+.5f,currY+TRIANGLE_RES+3+.5f);
-				writeTexCoord((gX+currX+TRIANGLE_RES+3f+.5f)/texture.width , (1.0f-(gY+currY+TRIANGLE_RES+3f+.5f)/texture.height));
-				c = fc[2];
-				textureG.fill(c);
-				textureG.stroke(c);
-				textureG.vertex(currX+3+.5f,currY+TRIANGLE_RES+3+.5f);
-				writeTexCoord((gX+currX+3f+.5f)/texture.width , (1.0f-(gY+currY+TRIANGLE_RES+3f+.5f)/texture.height));
-				textureG.endShape(CLOSE);
+				int x0 = currX+3+TRIANGLE_RES, y0 = currY+3;
+				int x1 = currX+TRIANGLE_RES+3, y1 = currY+TRIANGLE_RES+3;
+				int x2 = currX+3, y2 = currY+TRIANGLE_RES+3;
+				drawColoredTriangle(x0, y0, fc[0], x1, y1, fc[1], x2, y2, fc[2]);
+				writeTexCoord((x0+.5f)/textureWidth, (1.0f-(y0+.5f)/textureHeight));
+				writeTexCoord((x1+.5f)/textureWidth, (1.0f-(y1+.5f)/textureHeight));
+				writeTexCoord((x2+.5f)/textureWidth, (1.0f-(y2+.5f)/textureHeight));
 				currX += RECT_RES;
 			}
 			upper = !upper;
 		} else if(f.length == 4) {
-			textureG.strokeWeight(4);
-			textureG.beginShape();
-			c = fc[0];
-			textureG.fill(c);
-			textureG.stroke(c);
-			textureG.vertex(currX+1+.5f,currY+1+.5f);
-			writeTexCoord((gX+currX+1f+.5f)/texture.width , (1.0f-(gY+currY+1f+.5f)/texture.height));
-			c = fc[1];
-			textureG.fill(c);
-			textureG.stroke(c);
-			textureG.vertex(currX+1+TRIANGLE_RES+.5f,currY+1+.5f);
-			writeTexCoord((gX+currX+1f+TRIANGLE_RES+.5f)/texture.width , (1.0f-(gY+currY+1f+.5f)/texture.height));
-			c = fc[2];
-			textureG.fill(c);
-			textureG.stroke(c);
-			textureG.vertex(currX+TRIANGLE_RES+1+.5f,currY+TRIANGLE_RES+1+.5f);
-			writeTexCoord((gX+currX+TRIANGLE_RES+1f+.5f)/texture.width, (1.0f-(gY+currY+TRIANGLE_RES+1f+.5f)/texture.height));
-			c = fc[3];
-			textureG.fill(c);
-			textureG.stroke(c);
-			textureG.vertex(currX+1+.5f,currY+TRIANGLE_RES+1+.5f);
-			writeTexCoord((gX+currX+1f+.5f)/texture.width, (1.0f-(gY+currY+TRIANGLE_RES+1f+.5f)/texture.height));				
-			textureG.endShape(CLOSE);
+			int x0 = currX+1, y0 = currY+1;
+			int x1 = currX+1+TRIANGLE_RES, y1 = currY+1;
+			int x2 = currX+TRIANGLE_RES+1, y2 = currY+TRIANGLE_RES+1;
+			int x3 = currX+1, y3 = currY+TRIANGLE_RES+1;
+			drawColoredQuad(x0, y0, fc[0], x1, y1, fc[1], x2, y2, fc[2], x3, y3, fc[3]);
+			writeTexCoord((x0+.5f)/textureWidth, (1.0f-(y0+.5f)/textureHeight));
+			writeTexCoord((x1+.5f)/textureWidth, (1.0f-(y1+.5f)/textureHeight));
+			writeTexCoord((x2+.5f)/textureWidth, (1.0f-(y2+.5f)/textureHeight));
+			writeTexCoord((x3+.5f)/textureWidth, (1.0f-(y3+.5f)/textureHeight));
 			currX += RECT_RES;
 			upper = true;
 		}
-		if(currX+RECT_RES > textureG.width) {
+		if(currX+RECT_RES > textureWidth) {
 			currX = 0;
 			currY += RECT_RES;
-			
-			if(currY+RECT_RES > textureG.height) {
-				//copy to texture
-				//textureG.endDraw();
-				int copyW = PApplet.min(texture.width-gX, textureG.width);
-				int copyH = PApplet.min(texture.height-gY, textureG.height);
-				texture.copy(textureG,0,0,copyW,copyH,gX,gY,copyW,copyH);
-				//textureG.beginDraw();
-				textureG.background(0);
-				currX = 0;
-				currY = 0;
-				gX += textureG.width;
-				if(gX >= texture.width) {
-					gY += textureG.height;
-					gX = 0;
-				}
+		}
+	}
+
+	g2d.dispose();
+
+	// Save texture
+	try {
+		ImageIO.write(textureImg, "PNG", new File(file.getParent() + File.separator + filenameSimple + ".png"));
+	} catch (IOException e) {
+		showWarning("Failed to save texture: " + e.getMessage());
+	}
+  }
+
+  // Draw a triangle with vertex color interpolation using barycentric coordinates
+  private void drawColoredTriangle(int x0, int y0, int c0, int x1, int y1, int c1, int x2, int y2, int c2) {
+	// Calculate bounding box
+	int minX = Math.min(x0, Math.min(x1, x2));
+	int maxX = Math.max(x0, Math.max(x1, x2));
+	int minY = Math.min(y0, Math.min(y1, y2));
+	int maxY = Math.max(y0, Math.max(y1, y2));
+
+	// Precompute denominator for barycentric coordinates
+	float denom = (float)((y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2));
+	if (Math.abs(denom) < 0.0001f) {
+		// Degenerate triangle, use average color
+		int r = (((c0 >> 16) & 0xFF) + ((c1 >> 16) & 0xFF) + ((c2 >> 16) & 0xFF)) / 3;
+		int g = (((c0 >> 8) & 0xFF) + ((c1 >> 8) & 0xFF) + ((c2 >> 8) & 0xFF)) / 3;
+		int b = ((c0 & 0xFF) + (c1 & 0xFF) + (c2 & 0xFF)) / 3;
+		g2d.setColor(new Color(r, g, b));
+		g2d.fillPolygon(new int[]{x0, x1, x2}, new int[]{y0, y1, y2}, 3);
+		return;
+	}
+
+	// Extract RGB components from vertex colors
+	int r0 = (c0 >> 16) & 0xFF, g0 = (c0 >> 8) & 0xFF, b0 = c0 & 0xFF;
+	int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
+	int r2 = (c2 >> 16) & 0xFF, g2 = (c2 >> 8) & 0xFF, b2 = c2 & 0xFF;
+
+	// Iterate over bounding box and interpolate colors
+	for (int py = minY; py <= maxY; py++) {
+		for (int px = minX; px <= maxX; px++) {
+			// Bounds check
+			if (px < 0 || px >= textureWidth || py < 0 || py >= textureHeight) {
+				continue;
+			}
+
+			// Calculate barycentric coordinates
+			float lambda0 = ((y1 - y2) * (px - x2) + (x2 - x1) * (py - y2)) / denom;
+			float lambda1 = ((y2 - y0) * (px - x2) + (x0 - x2) * (py - y2)) / denom;
+			float lambda2 = 1.0f - lambda0 - lambda1;
+
+			// Check if point is inside triangle (with small epsilon for edge cases)
+			if (lambda0 >= -0.001f && lambda1 >= -0.001f && lambda2 >= -0.001f) {
+				// Clamp lambdas to valid range
+				lambda0 = Math.max(0, Math.min(1, lambda0));
+				lambda1 = Math.max(0, Math.min(1, lambda1));
+				lambda2 = Math.max(0, Math.min(1, lambda2));
+
+				// Normalize
+				float sum = lambda0 + lambda1 + lambda2;
+				lambda0 /= sum;
+				lambda1 /= sum;
+				lambda2 /= sum;
+
+				// Interpolate color
+				int r = (int)(lambda0 * r0 + lambda1 * r1 + lambda2 * r2);
+				int g = (int)(lambda0 * g0 + lambda1 * g1 + lambda2 * g2);
+				int b = (int)(lambda0 * b0 + lambda1 * b1 + lambda2 * b2);
+
+				// Clamp to valid range
+				r = Math.max(0, Math.min(255, r));
+				g = Math.max(0, Math.min(255, g));
+				b = Math.max(0, Math.min(255, b));
+
+				textureImg.setRGB(px, py, (r << 16) | (g << 8) | b);
 			}
 		}
 	}
-	int copyW = PApplet.min(texture.width-gX, textureG.width);
-	int copyH = PApplet.min(texture.height-gY, textureG.height);
-	texture.copy(textureG,0,0,copyW,copyH,gX,gY,copyW,copyH);
-	
-	textureG.endDraw();
-	
-	texture.save(file.getParent() + File.separator + filenameSimple + ".png");
+
+	// Draw border to fill edge pixels
+	drawTriangleBorder(x0, y0, c0, x1, y1, c1, x2, y2, c2);
+  }
+
+  // Draw triangle border with interpolated colors along edges
+  private void drawTriangleBorder(int x0, int y0, int c0, int x1, int y1, int c1, int x2, int y2, int c2) {
+	drawInterpolatedLine(x0, y0, c0, x1, y1, c1);
+	drawInterpolatedLine(x1, y1, c1, x2, y2, c2);
+	drawInterpolatedLine(x2, y2, c2, x0, y0, c0);
+  }
+
+  // Draw a line with color interpolation between two endpoints
+  private void drawInterpolatedLine(int x0, int y0, int c0, int x1, int y1, int c1) {
+	int dx = Math.abs(x1 - x0);
+	int dy = Math.abs(y1 - y0);
+	int steps = Math.max(dx, dy);
+	if (steps == 0) {
+		if (x0 >= 0 && x0 < textureWidth && y0 >= 0 && y0 < textureHeight) {
+			textureImg.setRGB(x0, y0, c0 & 0xFFFFFF);
+		}
+		return;
+	}
+
+	int r0 = (c0 >> 16) & 0xFF, g0 = (c0 >> 8) & 0xFF, b0 = c0 & 0xFF;
+	int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
+
+	for (int i = 0; i <= steps; i++) {
+		float t = (float) i / steps;
+		int px = (int)(x0 + t * (x1 - x0));
+		int py = (int)(y0 + t * (y1 - y0));
+
+		int r = (int)(r0 + t * (r1 - r0));
+		int g = (int)(g0 + t * (g1 - g0));
+		int b = (int)(b0 + t * (b1 - b0));
+
+		if (px >= 0 && px < textureWidth && py >= 0 && py < textureHeight) {
+			textureImg.setRGB(px, py, (r << 16) | (g << 8) | b);
+		}
+	}
+  }
+
+  // Draw a quad with vertex color interpolation (using bilinear interpolation)
+  private void drawColoredQuad(int x0, int y0, int c0, int x1, int y1, int c1, int x2, int y2, int c2, int x3, int y3, int c3) {
+	// Calculate bounding box
+	int minX = Math.min(Math.min(x0, x1), Math.min(x2, x3));
+	int maxX = Math.max(Math.max(x0, x1), Math.max(x2, x3));
+	int minY = Math.min(Math.min(y0, y1), Math.min(y2, y3));
+	int maxY = Math.max(Math.max(y0, y1), Math.max(y2, y3));
+
+	// Extract RGB components from vertex colors
+	int r0 = (c0 >> 16) & 0xFF, g0 = (c0 >> 8) & 0xFF, b0 = c0 & 0xFF;
+	int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
+	int r2 = (c2 >> 16) & 0xFF, g2 = (c2 >> 8) & 0xFF, b2 = c2 & 0xFF;
+	int r3 = (c3 >> 16) & 0xFF, g3 = (c3 >> 8) & 0xFF, b3 = c3 & 0xFF;
+
+	// For each pixel in bounding box, check if inside quad and interpolate color
+	for (int py = minY; py <= maxY; py++) {
+		for (int px = minX; px <= maxX; px++) {
+			// Bounds check
+			if (px < 0 || px >= textureWidth || py < 0 || py >= textureHeight) {
+				continue;
+			}
+
+			// Check if point is inside the quad using cross product test
+			if (!isInsideQuad(px, py, x0, y0, x1, y1, x2, y2, x3, y3)) {
+				continue;
+			}
+
+			// Use bilinear interpolation based on normalized position
+			// Quad vertices: 0(top-left), 1(top-right), 2(bottom-right), 3(bottom-left)
+			float u = (float)(px - minX) / Math.max(1, maxX - minX);
+			float v = (float)(py - minY) / Math.max(1, maxY - minY);
+
+			// Bilinear interpolation
+			// top edge: lerp between c0 and c1
+			// bottom edge: lerp between c3 and c2
+			// then lerp between top and bottom
+			float rTop = r0 + u * (r1 - r0);
+			float gTop = g0 + u * (g1 - g0);
+			float bTop = b0 + u * (b1 - b0);
+
+			float rBottom = r3 + u * (r2 - r3);
+			float gBottom = g3 + u * (g2 - g3);
+			float bBottom = b3 + u * (b2 - b3);
+
+			int r = (int)(rTop + v * (rBottom - rTop));
+			int g = (int)(gTop + v * (gBottom - gTop));
+			int b = (int)(bTop + v * (bBottom - bTop));
+
+			// Clamp to valid range
+			r = Math.max(0, Math.min(255, r));
+			g = Math.max(0, Math.min(255, g));
+			b = Math.max(0, Math.min(255, b));
+
+			textureImg.setRGB(px, py, (r << 16) | (g << 8) | b);
+		}
+	}
+
+	// Draw border to fill edge pixels
+	drawQuadBorder(x0, y0, c0, x1, y1, c1, x2, y2, c2, x3, y3, c3);
+  }
+
+  // Check if a point is inside a quadrilateral using cross product test
+  private boolean isInsideQuad(int px, int py, int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3) {
+	// Check if point is on the same side of all edges
+	float d0 = crossProduct2D(x1 - x0, y1 - y0, px - x0, py - y0);
+	float d1 = crossProduct2D(x2 - x1, y2 - y1, px - x1, py - y1);
+	float d2 = crossProduct2D(x3 - x2, y3 - y2, px - x2, py - y2);
+	float d3 = crossProduct2D(x0 - x3, y0 - y3, px - x3, py - y3);
+
+	boolean hasNeg = (d0 < 0) || (d1 < 0) || (d2 < 0) || (d3 < 0);
+	boolean hasPos = (d0 > 0) || (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+	// If all same sign (or zero), point is inside
+	return !(hasNeg && hasPos);
+  }
+
+  // 2D cross product
+  private float crossProduct2D(float ax, float ay, float bx, float by) {
+	return ax * by - ay * bx;
+  }
+
+  // Draw quad border with interpolated colors along edges
+  private void drawQuadBorder(int x0, int y0, int c0, int x1, int y1, int c1, int x2, int y2, int c2, int x3, int y3, int c3) {
+	drawInterpolatedLine(x0, y0, c0, x1, y1, c1);
+	drawInterpolatedLine(x1, y1, c1, x2, y2, c2);
+	drawInterpolatedLine(x2, y2, c2, x3, y3, c3);
+	drawInterpolatedLine(x3, y3, c3, x0, y0, c0);
   }
   
   public void beginShape(int kind) {
