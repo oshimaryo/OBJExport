@@ -23,7 +23,6 @@ package nervoussystem.obj;
 import java.io.*;
 import java.util.HashMap;
 import processing.core.*;
-import processing.opengl.*;
 
 public class MeshExport extends PGraphics {
   File file;
@@ -103,7 +102,12 @@ public class MeshExport extends PGraphics {
   public void beginDraw() {
     // have to create file object here, because the name isn't yet
     // available in allocate()
-	defaultSettings();
+    // Processing 4.x compatibility: removed defaultSettings() call
+    // as it causes NullPointerException when parent is not yet set.
+    // Initialize only what we need for this renderer.
+    fillColor = 0xFFFFFFFF;  // white fill by default
+    fill = true;
+
     if (writer == null) {
       try {
         writer = new PrintWriter(new FileWriter(file));
@@ -144,15 +148,20 @@ public class MeshExport extends PGraphics {
   private void colorExport() {
 	int numRects = PApplet.ceil(numTriangles/2.0f) + numQuads;
     int textureSize = PApplet.ceil(PApplet.sqrt(numRects))*RECT_RES;
-	
+
 	if(textureSize > 1024) {
 		showWarning("Generating texture... this might take a while");
 		textureSize = PApplet.ceil(textureSize/1024.0f)*1024;
 	}
-	if(texture == null) {
+	if(texture == null && parent != null) {
 		texture = parent.createImage(10,10,PApplet.RGB);
 		//textureG = parent.createGraphics(PApplet.min(textureSize,1024), PApplet.min(textureSize,1024), P2D);
-		textureG = parent.createGraphics(1024,1024, P2D);
+		textureG = parent.createGraphics(1024,1024, PConstants.P2D);
+	}
+	if(texture == null || textureG == null) {
+		showWarning("Cannot create texture for color export. Parent PApplet not set.");
+		colorFlag = false;
+		return;
 	}
 	//need to make a separate image in case the texture is too big for openGL
 	texture.resize(textureSize,textureSize);
